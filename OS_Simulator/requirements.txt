@@ -1,0 +1,5 @@
+# OS Simulator needs NO third-party packages to run.
+# Tkinter ships with the standard Python installer for Windows (tick "tcl/tk and IDLE").
+#
+# Only needed if you want to build a standalone .exe:
+pyinstaller>=6.0
