@@ -885,4 +885,524 @@ public class OSSimulator extends JFrame {
             new OSSimulator().setVisible(true);
         });
     }
+
+    static final class OSAlgorithms {
+        private OSAlgorithms() {}
+
+        public static class InputError extends RuntimeException {
+            public InputError(String m) { super(m); }
+        }
+
+        public static int toInt(String text, String name, Integer min, Integer max) {
+            String s = text == null ? "" : text.trim();
+            if (s.isEmpty()) throw new InputError(name + ": field is blank.");
+            int v;
+            try {
+                v = Integer.parseInt(s);
+            } catch (NumberFormatException e) {
+                throw new InputError(name + ": '" + s + "' is not a whole number (or is too large).");
+            }
+            if (min != null && v < min) throw new InputError(name + ": must be at least " + min + " (got " + v + ").");
+            if (max != null && v > max) throw new InputError(name + ": must be at most " + max + " (got " + v + ").");
+            return v;
+        }
+
+        public static int[] parseList(String text, String name, int min) {
+            String t = text == null ? "" : text.replace(',', ' ').replace(';', ' ').trim();
+            if (t.isEmpty()) throw new InputError(name + ": the list is empty.");
+            String[] tok = t.split("\\s+");
+            int[] out = new int[tok.length];
+            for (int i = 0; i < tok.length; i++) out[i] = toInt(tok[i], name, min, null);
+            return out;
+        }
+
+        public static final String[] CPU_ALGOS = {"FCFS", "SJF (Non-preemptive)", "SRTF (Preemptive SJF)",
+                "Priority (Non-preemptive)", "Priority (Preemptive)", "Round Robin"};
+
+        public static class Proc {
+            public final String pid; public final int at, bt, pr;
+            public Proc(String pid, int at, int bt, int pr) { this.pid = pid; this.at = at; this.bt = bt; this.pr = pr; }
+        }
+        public static class Seg {
+            public final String pid; public final int start, end;
+            public Seg(String pid, int start, int end) { this.pid = pid; this.start = start; this.end = end; }
+        }
+        public static class CpuRow {
+            public String pid; public int at, bt, pr, ct, tat, wt, rt;
+        }
+        public static class CpuResult {
+            public List<Seg> gantt = new ArrayList<>();
+            public List<CpuRow> rows = new ArrayList<>();
+            public double avgWt, avgTat, avgRt, util;
+        }
+
+        private static void addSeg(List<Seg> g, String pid, int s, int e) {
+            if (e <= s) return;
+            if (!g.isEmpty()) {
+                Seg last = g.get(g.size() - 1);
+                if (last.pid.equals(pid) && last.end == s) { g.set(g.size() - 1, new Seg(pid, last.start, e)); return; }
+            }
+            g.add(new Seg(pid, s, e));
+        }
+
+        private static long[] cpuKey(List<Proc> p, int[] rem, int mode, int i) {
+            switch (mode) {
+                case 0: return new long[]{p.get(i).at, i, 0};
+                case 1: return new long[]{p.get(i).bt, p.get(i).at, i};
+                case 2: return new long[]{rem[i], p.get(i).at, i};
+                default: return new long[]{p.get(i).pr, p.get(i).at, i};
+            }
+        }
+
+        private static int cmp(long[] a, long[] b) {
+            for (int i = 0; i < a.length; i++) if (a[i] != b[i]) return Long.compare(a[i], b[i]);
+            return 0;
+        }
+
+        public static CpuResult cpuSchedule(List<Proc> procs, String algo, int quantum) {
+            int n = procs.size();
+            if (n == 0) throw new InputError("Add at least one process.");
+            int mode = Arrays.asList(CPU_ALGOS).indexOf(algo);
+            if (mode < 0) throw new InputError("Unknown algorithm: " + algo);
+            int[] rem = new int[n], done = new int[n], first = new int[n];
+            Arrays.fill(first, -1);
+            for (int i = 0; i < n; i++) rem[i] = procs.get(i).bt;
+            List<Seg> gantt = new ArrayList<>();
+            int t = 0, finished = 0;
+            if (mode == 5) {
+                if (quantum < 1) throw new InputError("Time quantum must be at least 1.");
+                Integer[] order = new Integer[n];
+                for (int i = 0; i < n; i++) order[i] = i;
+                Arrays.sort(order, (a, b) -> {
+                    int c = Integer.compare(procs.get(a).at, procs.get(b).at);
+                    return c != 0 ? c : Integer.compare(a, b);
+                });
+                ArrayDeque<Integer> q = new ArrayDeque<>();
+                int nxt = 0;
+                while (finished < n) {
+                    while (nxt < n && procs.get(order[nxt]).at <= t) q.add(order[nxt++]);
+                    if (q.isEmpty()) {
+                        int a = procs.get(order[nxt]).at;
+                        addSeg(gantt, "Idle", t, a); t = a;
+                        continue;
+                    }
+                    int i = q.poll();
+                    if (first[i] < 0) first[i] = t;
+                    int run = Math.min(quantum, rem[i]);
+                    addSeg(gantt, procs.get(i).pid, t, t + run); t += run; rem[i] -= run;
+                    while (nxt < n && procs.get(order[nxt]).at <= t) q.add(order[nxt++]);
+                    if (rem[i] > 0) q.add(i); else { done[i] = t; finished++; }
+                }
+            } else {
+                boolean pre = mode == 2 || mode == 4;
+                while (finished < n) {
+                    int best = -1; long[] bk = null;
+                    for (int i = 0; i < n; i++) {
+                        if (rem[i] > 0 && procs.get(i).at <= t) {
+                            long[] k = cpuKey(procs, rem, mode, i);
+                            if (best < 0 || cmp(k, bk) < 0) { best = i; bk = k; }
+                        }
+                    }
+                    if (best < 0) {
+                        int a = Integer.MAX_VALUE;
+                        for (int i = 0; i < n; i++) if (rem[i] > 0) a = Math.min(a, procs.get(i).at);
+                        addSeg(gantt, "Idle", t, a); t = a;
+                        continue;
+                    }
+                    int i = best;
+                    if (first[i] < 0) first[i] = t;
+                    int run = rem[i];
+                    if (pre) {
+                        int nextArr = Integer.MAX_VALUE;
+                        for (int j = 0; j < n; j++) if (rem[j] > 0 && procs.get(j).at > t) nextArr = Math.min(nextArr, procs.get(j).at);
+                        if (nextArr != Integer.MAX_VALUE) run = Math.min(run, nextArr - t);
+                    }
+                    addSeg(gantt, procs.get(i).pid, t, t + run); t += run; rem[i] -= run;
+                    if (rem[i] == 0) { done[i] = t; finished++; }
+                }
+            }
+            CpuResult r = new CpuResult();
+            r.gantt = gantt;
+            for (int i = 0; i < n; i++) {
+                Proc p = procs.get(i);
+                CpuRow row = new CpuRow();
+                row.pid = p.pid; row.at = p.at; row.bt = p.bt; row.pr = p.pr; row.ct = done[i];
+                row.tat = done[i] - p.at; row.wt = row.tat - p.bt; row.rt = first[i] - p.at;
+                r.rows.add(row);
+                r.avgWt += row.wt; r.avgTat += row.tat; r.avgRt += row.rt;
+            }
+            r.avgWt /= n; r.avgTat /= n; r.avgRt /= n;
+            long busy = 0;
+            for (Seg s : gantt) if (!s.pid.equals("Idle")) busy += s.end - s.start;
+            int span = Math.max(1, gantt.get(gantt.size() - 1).end - gantt.get(0).start);
+            r.util = 100.0 * busy / span;
+            return r;
+        }
+
+        public static class BStep {
+            public final int proc; public final int[] before, after;
+            BStep(int p, int[] b, int[] a) { proc = p; before = b; after = a; }
+        }
+        public static class BankerResult {
+            public int[][] need; public boolean safe;
+            public List<Integer> sequence = new ArrayList<>();
+            public List<BStep> steps = new ArrayList<>();
+            public List<Integer> stuck = new ArrayList<>();
+        }
+        public static class RequestResult {
+            public boolean granted; public String message; public BankerResult result;
+        }
+
+        public static int[][] computeNeed(int[][] alloc, int[][] max) {
+            int[][] need = new int[alloc.length][];
+            for (int i = 0; i < alloc.length; i++) {
+                need[i] = new int[alloc[i].length];
+                for (int j = 0; j < alloc[i].length; j++) {
+                    need[i][j] = max[i][j] - alloc[i][j];
+                    if (need[i][j] < 0) throw new InputError("P" + i + ": Max is smaller than Allocation for resource R" + (j + 1) + ".");
+                }
+            }
+            return need;
+        }
+
+        public static BankerResult bankers(int[][] alloc, int[][] max, int[] avail) {
+            int n = alloc.length, m = avail.length;
+            if (n == 0 || m == 0) throw new InputError("Need at least one process and one resource type.");
+            for (int i = 0; i < n; i++)
+                if (alloc[i].length != m || max[i].length != m) throw new InputError("Row P" + i + " must have exactly " + m + " values per matrix.");
+            BankerResult r = new BankerResult();
+            r.need = computeNeed(alloc, max);
+            int[] work = avail.clone();
+            boolean[] fin = new boolean[n];
+            boolean progress = true;
+            while (r.sequence.size() < n && progress) {
+                progress = false;
+                for (int i = 0; i < n; i++) {
+                    if (fin[i]) continue;
+                    boolean ok = true;
+                    for (int j = 0; j < m; j++) if (r.need[i][j] > work[j]) { ok = false; break; }
+                    if (ok) {
+                        int[] before = work.clone();
+                        for (int j = 0; j < m; j++) work[j] += alloc[i][j];
+                        r.steps.add(new BStep(i, before, work.clone()));
+                        fin[i] = true; r.sequence.add(i); progress = true;
+                    }
+                }
+            }
+            r.safe = r.sequence.size() == n;
+            for (int i = 0; i < n; i++) if (!fin[i]) r.stuck.add(i);
+            return r;
+        }
+
+        public static RequestResult bankersRequest(int[][] alloc, int[][] max, int[] avail, int pid, int[] req) {
+            int n = alloc.length, m = avail.length;
+            if (pid < 0 || pid >= n) throw new InputError("Process index must be between 0 and " + (n - 1) + ".");
+            if (req.length != m) throw new InputError("Request needs exactly " + m + " values.");
+            int[][] need = computeNeed(alloc, max);
+            RequestResult rr = new RequestResult();
+            for (int j = 0; j < m; j++) {
+                if (req[j] < 0) throw new InputError("Request values cannot be negative.");
+                if (req[j] > need[pid][j]) { rr.message = "DENIED: P" + pid + " requests more than its remaining Need."; return rr; }
+            }
+            for (int j = 0; j < m; j++)
+                if (req[j] > avail[j]) { rr.message = "P" + pid + " must WAIT: resources are not currently available."; return rr; }
+            int[][] a2 = new int[n][];
+            for (int i = 0; i < n; i++) a2[i] = alloc[i].clone();
+            int[] av2 = avail.clone();
+            for (int j = 0; j < m; j++) { a2[pid][j] += req[j]; av2[j] -= req[j]; }
+            rr.result = bankers(a2, max, av2);
+            rr.granted = rr.result.safe;
+            rr.message = rr.granted ? "GRANTED: the system stays safe." : "DENIED: granting would leave the system in an UNSAFE state.";
+            return rr;
+        }
+
+        public static List<Object[]> pagingTranslate(int pageSize, Map<Integer, Integer> table, int[] addrs) {
+            List<Object[]> rows = new ArrayList<>();
+            for (int a : addrs) {
+                int page = a / pageSize, off = a % pageSize;
+                Integer f = table.get(page);
+                if (f != null) rows.add(new Object[]{a, page, off, f, (long) f * pageSize + off, "OK"});
+                else rows.add(new Object[]{a, page, off, "-", "-", "INVALID: page " + page + " is not mapped (page fault)"});
+            }
+            return rows;
+        }
+
+        public static final String[] PR_ALGOS = {"FIFO", "LRU", "Optimal", "Clock (Second Chance)"};
+
+        public static class PRStep {
+            public final int index, page, replaced; public final int[] slots; public final boolean hit;
+            PRStep(int i, int p, int[] s, boolean h, int r) { index = i; page = p; slots = s; hit = h; replaced = r; }
+        }
+        public static class PRResult {
+            public List<PRStep> steps = new ArrayList<>(); public int faults;
+        }
+
+        private static int indexOf(int[] a, int v) {
+            for (int i = 0; i < a.length; i++) if (a[i] == v) return i;
+            return -1;
+        }
+
+        private static int nextUse(List<Integer> pos, int i) {
+            int lo = 0, hi = pos.size();
+            while (lo < hi) { int mid = (lo + hi) >>> 1; if (pos.get(mid) <= i) lo = mid + 1; else hi = mid; }
+            return lo < pos.size() ? pos.get(lo) : Integer.MAX_VALUE;
+        }
+
+        public static PRResult pageReplace(int[] refs, int nf, String algo) {
+            if (nf < 1) throw new InputError("Number of frames must be at least 1.");
+            if (!Arrays.asList(PR_ALGOS).contains(algo)) throw new InputError("Unknown algorithm: " + algo);
+            int[] slots = new int[nf], bits = new int[nf];
+            Arrays.fill(slots, -1);
+            int ptr = 0;
+            Map<Integer, Integer> last = new HashMap<>();
+            Map<Integer, List<Integer>> positions = new HashMap<>();
+            if (algo.equals("Optimal"))
+                for (int i = 0; i < refs.length; i++) positions.computeIfAbsent(refs[i], k -> new ArrayList<>()).add(i);
+            PRResult res = new PRResult();
+            for (int i = 0; i < refs.length; i++) {
+                int p = refs[i], idx = indexOf(slots, p), replaced = -1;
+                boolean hit = idx >= 0;
+                if (hit) {
+                    if (algo.startsWith("Clock")) bits[idx] = 1;
+                } else {
+                    res.faults++;
+                    int v, empty = indexOf(slots, -1);
+                    if (empty >= 0 && (algo.equals("LRU") || algo.equals("Optimal"))) {
+                        v = empty;
+                    } else if (algo.equals("FIFO")) {
+                        v = ptr; ptr = (ptr + 1) % nf;
+                    } else if (algo.equals("LRU")) {
+                        v = 0;
+                        for (int k = 1; k < nf; k++) if (last.get(slots[k]) < last.get(slots[v])) v = k;
+                    } else if (algo.equals("Optimal")) {
+                        v = 0; long best = -1;
+                        for (int k = 0; k < nf; k++) {
+                            long nu = nextUse(positions.get(slots[k]), i);
+                            if (nu > best) { best = nu; v = k; }
+                        }
+                    } else {
+                        while (slots[ptr] != -1 && bits[ptr] == 1) { bits[ptr] = 0; ptr = (ptr + 1) % nf; }
+                        v = ptr; ptr = (ptr + 1) % nf; bits[v] = 1;
+                    }
+                    replaced = slots[v]; slots[v] = p;
+                }
+                last.put(p, i);
+                res.steps.add(new PRStep(i + 1, p, slots.clone(), hit, replaced));
+            }
+            return res;
+        }
+
+        public static List<String> segOverlaps(Map<Integer, long[]> segs) {
+            List<Map.Entry<Integer, long[]>> items = new ArrayList<>(segs.entrySet());
+            items.sort(Comparator.comparingLong(e -> e.getValue()[0]));
+            List<String> out = new ArrayList<>();
+            for (int i = 0; i + 1 < items.size(); i++) {
+                long[] a = items.get(i).getValue(), b = items.get(i + 1).getValue();
+                if (a[0] + a[1] > b[0]) out.add("Segments " + items.get(i).getKey() + " and " + items.get(i + 1).getKey() + " overlap in physical memory.");
+            }
+            return out;
+        }
+
+        public static List<Object[]> segTranslate(Map<Integer, long[]> segs, List<int[]> reqs) {
+            List<Object[]> rows = new ArrayList<>();
+            for (int[] r : reqs) {
+                long[] s = segs.get(r[0]);
+                if (s == null) rows.add(new Object[]{r[0], r[1], "-", "-", "-", "ERROR: segment " + r[0] + " does not exist"});
+                else if (r[1] >= s[1]) rows.add(new Object[]{r[0], r[1], s[1], s[0], "-", "ERROR: offset " + r[1] + " >= limit " + s[1] + " (trap)"});
+                else rows.add(new Object[]{r[0], r[1], s[1], s[0], s[0] + r[1], "OK"});
+            }
+            return rows;
+        }
+
+        public static final String[] FRAG_STRATEGIES = {"First Fit", "Best Fit", "Worst Fit", "Next Fit"};
+
+        public static class FragResult {
+            public int[] assign, remaining, internal;
+            public long internalTotal, externalTotal;
+            public List<Integer> unallocated = new ArrayList<>(), extProblem = new ArrayList<>();
+        }
+
+        public static FragResult allocate(int[] blocks, int[] procs, String strategy, boolean dynamic) {
+            if (!Arrays.asList(FRAG_STRATEGIES).contains(strategy)) throw new InputError("Unknown strategy: " + strategy);
+            int nb = blocks.length;
+            if (nb == 0 || procs.length == 0) throw new InputError("Enter at least one memory block and one process.");
+            int[] free = blocks.clone();
+            boolean[] occ = new boolean[nb];
+            FragResult r = new FragResult();
+            r.assign = new int[procs.length]; r.internal = new int[procs.length];
+            int last = 0;
+            for (int pi = 0; pi < procs.length; pi++) {
+                int ps = procs[pi], b = -1;
+                for (int x = 0; x < nb; x++) {
+                    if (free[x] < ps || (!dynamic && occ[x])) continue;
+                    if (b < 0) { b = x; if (strategy.equals("First Fit")) break; continue; }
+                    switch (strategy) {
+                        case "Best Fit": if (free[x] < free[b]) b = x; break;
+                        case "Worst Fit": if (free[x] > free[b]) b = x; break;
+                        default: if ((x - last + nb) % nb < (b - last + nb) % nb) b = x;
+                    }
+                }
+                r.assign[pi] = b;
+                if (b < 0) continue;
+                if (strategy.equals("Next Fit")) last = b;
+                occ[b] = true;
+                if (dynamic) free[b] -= ps; else { r.internal[pi] = free[b] - ps; free[b] = 0; }
+            }
+            r.remaining = free;
+            for (int v : r.internal) r.internalTotal += v;
+            for (int x = 0; x < nb; x++) r.externalTotal += dynamic ? free[x] : (occ[x] ? 0 : blocks[x]);
+            for (int pi = 0; pi < procs.length; pi++) {
+                if (r.assign[pi] < 0) {
+                    r.unallocated.add(pi);
+                    if (procs[pi] <= r.externalTotal) r.extProblem.add(pi);
+                }
+            }
+            return r;
+        }
+
+        public static final String[] DISK_ALGOS = {"FCFS", "SSTF", "SCAN", "C-SCAN", "LOOK", "C-LOOK"};
+
+        public static class DiskResult {
+            public List<Integer> order = new ArrayList<>();
+            public List<int[]> path = new ArrayList<>();
+            public List<Integer> moves = new ArrayList<>();
+            public long total;
+        }
+
+        public static DiskResult diskSchedule(String algo, int[] reqs, int head, int size, boolean goRight, boolean countJump) {
+            if (!Arrays.asList(DISK_ALGOS).contains(algo)) throw new InputError("Unknown algorithm: " + algo);
+            if (size < 2) throw new InputError("Disk size (cylinders) must be at least 2.");
+            if (head < 0 || head >= size) throw new InputError("Head position must be between 0 and " + (size - 1) + ".");
+            if (reqs.length == 0) throw new InputError("Enter at least one disk request.");
+            for (int r : reqs) if (r < 0 || r >= size) throw new InputError("Request " + r + " is outside the disk range 0.." + (size - 1) + ".");
+            DiskResult d = new DiskResult();
+            d.path.add(new int[]{head, 0, 0});
+            if (algo.equals("FCFS")) {
+                for (int r : reqs) d.path.add(new int[]{r, 1, 0});
+            } else if (algo.equals("SSTF")) {
+                List<Integer> pend = new ArrayList<>();
+                for (int r : reqs) pend.add(r);
+                int cur = head;
+                while (!pend.isEmpty()) {
+                    int bi = 0;
+                    for (int i = 1; i < pend.size(); i++) {
+                        int a = Math.abs(pend.get(i) - cur), b = Math.abs(pend.get(bi) - cur);
+                        if (a < b || (a == b && pend.get(i) < pend.get(bi))) bi = i;
+                    }
+                    cur = pend.remove(bi);
+                    d.path.add(new int[]{cur, 1, 0});
+                }
+            } else {
+                List<Integer> first = new ArrayList<>(), second = new ArrayList<>();
+                for (int r : reqs) {
+                    if (goRight) { if (r >= head) first.add(r); else second.add(r); }
+                    else { if (r <= head) first.add(r); else second.add(r); }
+                }
+                Collections.sort(first); Collections.sort(second);
+                if (!goRight) Collections.reverse(first);
+                if (goRight) Collections.reverse(second);
+                int end1 = goRight ? size - 1 : 0, end2 = goRight ? 0 : size - 1;
+                for (int r : first) d.path.add(new int[]{r, 1, 0});
+                List<Integer> cs = new ArrayList<>(second);
+                Collections.reverse(cs);
+                if (algo.equals("SCAN")) {
+                    if (d.path.get(d.path.size() - 1)[0] != end1) d.path.add(new int[]{end1, 0, 0});
+                    for (int r : second) d.path.add(new int[]{r, 1, 0});
+                } else if (algo.equals("LOOK")) {
+                    for (int r : second) d.path.add(new int[]{r, 1, 0});
+                } else if (algo.equals("C-SCAN")) {
+                    if (d.path.get(d.path.size() - 1)[0] != end1) d.path.add(new int[]{end1, 0, 0});
+                    if (!cs.isEmpty()) {
+                        d.path.add(new int[]{end2, 0, 1});
+                        for (int r : cs) d.path.add(new int[]{r, 1, 0});
+                    }
+                } else if (!cs.isEmpty()) {
+                    d.path.add(new int[]{cs.get(0), 1, 1});
+                    for (int i = 1; i < cs.size(); i++) d.path.add(new int[]{cs.get(i), 1, 0});
+                }
+            }
+            for (int k = 1; k < d.path.size(); k++) {
+                int mv = Math.abs(d.path.get(k)[0] - d.path.get(k - 1)[0]);
+                if (d.path.get(k)[2] == 1 && !countJump) mv = 0;
+                d.moves.add(mv); d.total += mv;
+            }
+            for (int[] p : d.path) if (p[1] == 1) d.order.add(p[0]);
+            return d;
+        }
+
+        public static class MProc {
+            public final String pid; public final int mem, at, bt;
+            public MProc(String pid, int mem, int at, int bt) { this.pid = pid; this.mem = mem; this.at = at; this.bt = bt; }
+        }
+        public static class MultiResult {
+            public List<Object[]> slices = new ArrayList<>();
+            public List<Object[]> rows = new ArrayList<>();
+            public int totalTime, completed, rejected;
+            public double cpuUtil, memUtil, avgDegree, throughput;
+        }
+
+        private static String names(Collection<Integer> ids, List<MProc> p) {
+            List<Integer> s = new ArrayList<>(ids);
+            Collections.sort(s);
+            StringBuilder sb = new StringBuilder();
+            for (int k = 0; k < s.size() && k < 8; k++) sb.append(k > 0 ? "," : "").append(p.get(s.get(k)).pid);
+            if (s.size() > 8) sb.append("...");
+            return sb.length() == 0 ? "-" : sb.toString();
+        }
+
+        public static MultiResult multiprogramming(List<MProc> procs, int totalMem, int quantum, int maxDegree) {
+            if (totalMem < 1 || quantum < 1) throw new InputError("Total memory and quantum must be at least 1.");
+            if (procs.isEmpty()) throw new InputError("Add at least one process.");
+            int n = procs.size();
+            Integer[] order = new Integer[n];
+            for (int i = 0; i < n; i++) order[i] = i;
+            Arrays.sort(order, (a, b) -> {
+                int c = Integer.compare(procs.get(a).at, procs.get(b).at);
+                return c != 0 ? c : Integer.compare(a, b);
+            });
+            MultiResult r = new MultiResult();
+            boolean[] rejected = new boolean[n];
+            ArrayDeque<Integer> pend = new ArrayDeque<>();
+            int[] rem = new int[n], admit = new int[n], finish = new int[n];
+            for (int i : order) {
+                if (procs.get(i).mem > totalMem) { rejected[i] = true; r.rejected++; } else { pend.add(i); rem[i] = procs.get(i).bt; }
+            }
+            List<Integer> jobq = new ArrayList<>();
+            ArrayDeque<Integer> ready = new ArrayDeque<>();
+            TreeSet<Integer> inMem = new TreeSet<>();
+            long used = 0, busy = 0, memArea = 0, degArea = 0;
+            int t = 0;
+            while (!pend.isEmpty() || !jobq.isEmpty() || !ready.isEmpty()) {
+                while (!pend.isEmpty() && procs.get(pend.peek()).at <= t) jobq.add(pend.poll());
+                for (Integer i : new ArrayList<>(jobq)) {
+                    if (used + procs.get(i).mem <= totalMem && (maxDegree <= 0 || inMem.size() < maxDegree)) {
+                        jobq.remove(i); inMem.add(i); ready.add(i); used += procs.get(i).mem; admit[i] = t;
+                    }
+                }
+                if (ready.isEmpty()) {
+                    if (pend.isEmpty()) break;
+                    int nt = procs.get(pend.peek()).at;
+                    r.slices.add(new Object[]{t, nt, "Idle", used, 0, "-", names(jobq, procs)});
+                    t = nt;
+                    continue;
+                }
+                int i = ready.poll();
+                int run = Math.min(quantum, rem[i]);
+                r.slices.add(new Object[]{t, t + run, procs.get(i).pid, used, inMem.size(), names(inMem, procs), names(jobq, procs)});
+                busy += run; memArea += used * run; degArea += (long) inMem.size() * run;
+                t += run; rem[i] -= run;
+                if (rem[i] == 0) { finish[i] = t; inMem.remove(i); used -= procs.get(i).mem; r.completed++; }
+                else ready.add(i);
+            }
+            for (int i : order) {
+                MProc p = procs.get(i);
+                if (rejected[i]) r.rows.add(new Object[]{p.pid, p.mem, p.at, p.bt, "-", "-", "-", "REJECTED (memory > total)"});
+                else { int tat = finish[i] - p.at; r.rows.add(new Object[]{p.pid, p.mem, p.at, p.bt, admit[i], finish[i], tat, tat - p.bt}); }
+            }
+            int T = Math.max(1, t);
+            r.totalTime = t; r.cpuUtil = 100.0 * busy / T; r.memUtil = 100.0 * memArea / ((double) totalMem * T);
+            r.avgDegree = (double) degArea / T; r.throughput = (double) r.completed / T;
+            return r;
+        }
+    }
 }
