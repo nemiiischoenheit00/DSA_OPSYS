@@ -21,23 +21,24 @@ class ModuleView(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
         head = ttk.Frame(self)
-        head.pack(fill="x", padx=28, pady=(20, 6))
+        head.pack(fill="x", padx=30, pady=(22, 7))
+        ttk.Label(head, text="SIMULATION MODULE", style="Eyebrow.TLabel").pack(anchor="w", pady=(0, 4))
         ttk.Label(head, text=self.title, style="Title.TLabel").pack(anchor="w")
         ttk.Label(head, text=self.description, style="Muted.TLabel", wraplength=1000,
                   justify="left").pack(anchor="w", pady=(2, 0))
 
         self.page = ScrollableFrame(self)
-        self.page.pack(fill="both", expand=True, padx=(28, 12), pady=(8, 12))
+        self.page.pack(fill="both", expand=True, padx=(30, 14), pady=(8, 14))
         content = self.page.inner
 
-        self.input_card = Card(content, "1 · Input")
+        self.input_card = Card(content, "Configure your simulation", "Enter values below, or load an example to explore.")
         self.input_card.pack(fill="x", pady=(0, 10))
         self.build_inputs(self.input_card.body)
 
         bar = ttk.Frame(content)
         bar.pack(fill="x", pady=(0, 10))
         ttk.Button(bar, text=self.run_label, style="Accent.TButton", command=self._run_clicked).pack(side="left")
-        ttk.Button(bar, text="Reset / clear", command=self._reset_clicked).pack(side="left", padx=8)
+        ttk.Button(bar, text="Reset inputs", command=self._reset_clicked).pack(side="left", padx=8)
         self.status_var = tk.StringVar(value="")
         self.status_label = ttk.Label(bar, textvariable=self.status_var, style="Muted.TLabel")
         self.status_label.pack(side="left", padx=12)

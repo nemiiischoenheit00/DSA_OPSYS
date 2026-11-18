@@ -63,6 +63,7 @@ class ScrollableFrame(ttk.Frame):
         self.horizontal = horizontal
         kw = {"height": height} if height else {}
         self.canvas = tk.Canvas(self, highlightthickness=0, bd=0, bg=bg, **kw)
+        self.canvas._surface_key = "card" if card else "bg"
         self.vbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.vbar.set)
         self.canvas.grid(row=0, column=0, sticky="nsew")
@@ -393,6 +394,11 @@ class ResultTable(ttk.Frame):
                              tags=(tag,) if tag else ())
         if on_select:
             self.tree.bind("<<TreeviewSelect>>", lambda e: self._selected(on_select))
+
+    def refresh_theme(self):
+        for tag, color in (("ok", COLORS["ok"]), ("bad", COLORS["bad"]),
+                           ("warn", COLORS["warn"]), ("accent", COLORS["accent_hover"])):
+            self.tree.tag_configure(tag, foreground=color)
 
     def _selected(self, callback):
         sel = self.tree.selection()

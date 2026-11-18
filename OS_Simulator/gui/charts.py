@@ -19,6 +19,7 @@ class _ChartBase(ttk.Frame):
         super().__init__(parent, style="Card.TFrame")
         self.canvas = tk.Canvas(self, width=width, height=height, bg=COLORS["card"],
                                 highlightthickness=0, bd=0)
+        self.canvas._surface_key = "card"
         self.canvas.grid(row=0, column=0, sticky="nsew")
         if scroll_x:
             hbar = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
@@ -31,6 +32,14 @@ class _ChartBase(ttk.Frame):
             self.canvas.scroll_canvas = self.canvas
         self.columnconfigure(0, weight=1)
 
+    def _remember_draw(self, *args, **kwargs):
+        self._draw_state = (args, kwargs)
+
+    def refresh_theme(self):
+        if getattr(self, "_draw_state", None):
+            args, kwargs = self._draw_state
+            self.draw(*args, **kwargs)
+
     def clear(self):
         self.canvas.delete("all")
 
@@ -41,6 +50,7 @@ class GanttChart(_ChartBase):
 
     def draw(self, segments, idle_label="IDLE"):
         """segments: list of (label, start, end)."""
+        self._remember_draw(segments, idle_label)
         self.clear()
         if not segments:
             return
@@ -80,6 +90,7 @@ class DiskChart(_ChartBase):
 
     def draw(self, path, low, high):
         """path: list of Step objects from core.disk_scheduling."""
+        self._remember_draw(path, low, high)
         self.clear()
         left, right, top, row_h = 40, self.width - 40, 36, 24
         span = max(high - low, 1)
@@ -124,7 +135,12 @@ class MemoryMap(_ChartBase):
     def _color(self, key):
         return self._colors.setdefault(key, pid_color(len(self._colors)))
 
+    def refresh_theme(self):
+        self._colors.clear()
+        super().refresh_theme()
+
     def draw(self, rows, height=None):
+        self._remember_draw(rows, height)
         self.clear()
         label_w, bar_h, gap = 110, 26, 14
         biggest = max((total for _, total, _ in rows), default=1)
@@ -161,6 +177,7 @@ class BarChart(_ChartBase):
         self.width, self.height = width, height
 
     def draw(self, labels, values, title="", fmt="{:g}", best_is_min=True):
+        self._remember_draw(labels, values, title, fmt, best_is_min)
         self.clear()
         if not values:
             return
@@ -191,6 +208,7 @@ class StepChart(_ChartBase):
 
     def draw(self, points, ymax=100.0, title="", y_unit="%"):
         """points: [(time, value)] - the value holds until the next point."""
+        self._remember_draw(points, ymax, title, y_unit)
         self.clear()
         if len(points) < 2:
             return
