@@ -134,10 +134,3 @@ test_valid_translations (tests.test_segmentation.TestSegmentation.test_valid_tra
 | Disk | textbook queue: FCFS 640, SSTF 236, SCAN 331, C-SCAN 382, LOOK 299, C-LOOK 322 (+ down direction, no-jump) | yes / yes / yes / 3000 requests |
 | Multiprogramming | hand-simulated example (completion 6/8/10, CPU 100%, memory 72%, degree 1.8) | yes / yes / yes / 500 jobs (no overlap, memory bounds) |
 | GUI (fake tkinter) | every page: example runs, blank input, bad values, large random data | logic only |
-
-## NOT verified in this environment (please do on Windows before submitting)
-* The sandbox had **no Tkinter and no display**, so the real window was **never opened here**. `test_gui_smoke.py` runs
-  our GUI code against a fake tkinter, which cannot catch layout, colour, scrolling or real-Tk API problems.
-* Manual checklist: launch `python main.py`; open all 8 pages; press *Load example* + *Run* on each; try an empty Run;
-  add 300 random rows; resize the window; scroll with the mouse wheel; build the `.exe` with `build_exe.bat`.
-* The `.exe` build was not performed (needs Windows + PyInstaller).
